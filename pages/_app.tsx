@@ -12,19 +12,20 @@ function App({ Component, pageProps }: AppProps) {
   const Layout = getLayout<LayoutProps>(Component)
 
   return (
-    <StatsigProvider
-      sdkKey={process.env.NEXT_PUBLIC_STATSIG_CLIENT_KEY!}
-      waitForInitialization={false}
-      user={{ userID }}
-    >
-      <Layout
-        title="Experimentation with Statsig"
-        description="How to do experimentation with Statsig"
-        path="edge-middleware/ab-testing-statsig"
-      >
-        <Component {...pageProps} />
-      </Layout>
-    </StatsigProvider>
+    <div>Hello, world</div>
+    // <StatsigProvider
+    //   sdkKey={process.env.NEXT_PUBLIC_STATSIG_CLIENT_KEY!}
+    //   waitForInitialization={false}
+    //   user={{ userID }}
+    // >
+    //   <Layout
+    //     title="Experimentation with Statsig"
+    //     description="How to do experimentation with Statsig"
+    //     path="edge-middleware/ab-testing-statsig"
+    //   >
+    //     <Component {...pageProps} />
+    //   </Layout>
+    // </StatsigProvider>
   )
 }
 

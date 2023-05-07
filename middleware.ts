@@ -1,48 +1,139 @@
-import { NextRequest, NextResponse, NextFetchEvent } from 'next/server'
-import Statsig from 'statsig-node'
-import { EdgeConfigDataAdapter } from 'statsig-node-vercel'
-import { EXPERIMENT, UID_COOKIE, GROUP_PARAM_FALLBACK } from './lib/constants'
+import { NextRequest, NextResponse, NextFetchEvent } from "next/server";
+import Statsig from "statsig-node";
+import { EdgeConfigDataAdapter } from "statsig-node-vercel";
+import {
+  EXPERIMENTS_COOKIE,
+  EXPERIMENTS_COOKIE_EXPIRE_INTERVAL_NUM,
+  EXPERIMENTS_RULES_COOKIE,
+  STATSIG_IDENTITY_COOKIE,
+  STATSIG_IDENTITY_COOKIE_EXPIRE_INTERVAL_NUM,
+  VARIATION_WITH_DEFAULT_EXPERIMENTS,
+} from "./lib/constants";
 
-// We'll use this to validate a random UUID
-const IS_UUID = /^[0-9a-f-]+$/i
-const dataAdapter = new EdgeConfigDataAdapter(process.env.EDGE_CONFIG_ITEM_KEY!)
+import { generateStatsigUserId, getStatsigUserId } from "./lib/statsig";
+import { getExperiments } from "./lib/get-experiments";
+import { RequestCookies } from "next/dist/server/web/spec-extension/cookies";
+import { encodeExperiments, encodeRules } from "./lib/coding";
 
 export const config = {
-  matcher: '/',
+  matcher: "/",
+};
+
+const EXPERIMENTS = {
+  button_text: {
+    params: {
+      button_text: ["Buy now", "Add to cart"],
+    },
+  },
+  image: {
+    params: {
+      image_url: ["verceltshirt", "verceltshirtgroup"],
+    },
+  },
+  headline: {
+    params: {
+      headline: ["Vercel t-shirt", "100% premium cotton Vercel t-shirt"],
+    },
+  },
+};
+
+function rewriteUrl(req: NextRequest, path: string) {
+  const url = req.nextUrl.clone();
+  url.pathname = `/${path}`;
+  const res = NextResponse.rewrite(url);
+  return res;
+}
+
+function getExperimentUrlFromCookie(cookies: RequestCookies) {
+  const statsigCookie = cookies.get(EXPERIMENTS_COOKIE);
+  const encodedExperiments = statsigCookie?.value;
+  return encodedExperiments;
+}
+
+
+function setCookieOnResponse(
+  response: NextResponse,
+  cookieName: string,
+  cookieValue: string,
+  expire:
+    | typeof EXPERIMENTS_COOKIE_EXPIRE_INTERVAL_NUM
+    | typeof STATSIG_IDENTITY_COOKIE_EXPIRE_INTERVAL_NUM = EXPERIMENTS_COOKIE_EXPIRE_INTERVAL_NUM
+): void {
+  response.cookies.set(cookieName, cookieValue, {
+    sameSite: "strict",
+    path: "/",
+    secure: process.env.NODE_ENV === "production",
+    expires: new Date(Date.now() + expire),
+  });
 }
 
 export async function middleware(req: NextRequest, event: NextFetchEvent) {
-  // Get the user ID from the cookie or get a new one
-  let userId = req.cookies.get(UID_COOKIE)?.value
-  let hasUserId = !!userId
+  console.time("middleware");
+  console.time("get id");
+  let id = getStatsigUserId(req.cookies);
+  console.timeEnd("get id");
+  let needIdCookieUpdate = false;
 
-  // If there's no active user ID in cookies or its value is invalid, get a new one
-  if (!userId || !IS_UUID.test(userId)) {
-    userId = crypto.randomUUID()
-    hasUserId = false
+  if (id) {
+    console.time("get cookie");
+    const url = getExperimentUrlFromCookie(req.cookies);
+    console.timeEnd("get cookie");
+    if (url) {
+      console.timeEnd("middleware");
+      return rewriteUrl(req, url);
+    }
+  } else {
+    console.time("gen id");
+    id = generateStatsigUserId();
+    console.timeEnd("gen id");
+    needIdCookieUpdate = true;
+    console.time("get experiments");
+    const { experiments, rules } = await getExperiments(id);
+    console.timeEnd("get experiments");
+    try {
+      console.time("encoding");
+      const experimentsEncoded = encodeExperiments(experiments);
+      const rulesEncoded = encodeRules(rules);
+      console.timeEnd("encoding");
+      const response = rewriteUrl(req, experimentsEncoded);
+      console.time("setting cookies");
+      if (needIdCookieUpdate) {
+        setCookieOnResponse(
+          response,
+          STATSIG_IDENTITY_COOKIE,
+          id,
+          STATSIG_IDENTITY_COOKIE_EXPIRE_INTERVAL_NUM
+        );
+      }
+      setCookieOnResponse(response, EXPERIMENTS_COOKIE, experimentsEncoded);
+      setCookieOnResponse(response, EXPERIMENTS_RULES_COOKIE, rulesEncoded);
+      console.timeEnd("setting cookies");
+
+      console.timeEnd("middleware");
+      return response;
+    } catch (e) {
+      console.log(e);
+      console.timeEnd("middleware");
+      return rewriteUrl(req, VARIATION_WITH_DEFAULT_EXPERIMENTS);
+    }
   }
-
-  await Statsig.initialize(process.env.STATSIG_SERVER_API_KEY!, { dataAdapter })
-
-  const experiment = await Statsig.getExperiment({ userID: userId }, EXPERIMENT)
-  const bucket = experiment.get<string>('bucket', GROUP_PARAM_FALLBACK)
-
-  // Clone the URL and change its pathname to point to a bucket
-  const url = req.nextUrl.clone()
-  url.pathname = `/${bucket}`
-
-  // Response that'll rewrite to the selected bucket
-  const res = NextResponse.rewrite(url)
-
-  // Add the user ID to the response cookies if it's not there or if its value was invalid
-  if (!hasUserId) {
-    res.cookies.set(UID_COOKIE, userId, {
-      maxAge: 60 * 60 * 24, // identify users for 24 hours
-    })
-  }
-
-  // Flush exposure logs to Statsig
-  event.waitUntil(Statsig.flush());
-
-  return res
 }
+
+
+/* 
+
+PSEUDOCODE
+
+CLI
+  - Download experiment values from Statsig
+  - Transform experiment JSON to add encoded path
+  - Sync this into Edge Config
+
+MIDDLEWARE
+  - Check for user cookie
+    - If exists:
+      - rewrite to that path
+    - If not exists: 
+      - 
+
+*/

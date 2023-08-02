@@ -40,21 +40,16 @@ export async function getExperiments(
   userID: string,
   jwtCookieValue?: string
 ): Promise<ExperimentsFetchAttempt> {
+  console.time("get experiments");
   const experiments = getIsolatedExperimentDefaults() as CodableExperiments;
   const plainRules: Record<string, string> = {};
 
-  const [jwtData] = await Promise.all([
-    getStatsigUserPropertiesFromJWT(jwtCookieValue),
-  ]);
-
   const statsigUser: StatsigUser = {
     userID,
-    custom: {
-      ...jwtData,
-    },
   };
 
   const promises = [];
+  console.time("get statsig experiments");
   for (const [name, params] of Object.entries(experiments)) {
     const newParams = {
       ...params,
@@ -84,6 +79,7 @@ export async function getExperiments(
   // Await all individual promises to populate the parameters from Statsig
   try {
     await Promise.all(promises);
+    console.timeEnd("get statsig experiments");
   } catch (e) {
     // eslint-disable-next-line no-console
     console.error(
@@ -120,13 +116,15 @@ async function getStatsigExperiment<T extends ExperimentName>(
   statsigUser: StatsigUser
 ): Promise<DynamicConfig | undefined> {
   try {
-    console.time('get_statsig')
+    console.time("get_statsig");
     await statsig.initialize(process.env.STATSIG_SERVER_API_KEY!, {
       dataAdapter: getDataAdapter(),
     });
-    console.timeEnd('get_statsig')
+    console.timeEnd("get_statsig");
 
+    console.time("get_experiment_");
     const _experiment = statsig.getExperiment(statsigUser, experimentName);
+    console.timeEnd("get_experiment_");
     return _experiment;
   } catch (e) {
     if (DEV_OR_PREVIEW_ENV) {

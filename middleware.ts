@@ -68,35 +68,22 @@ function setCookieOnResponse(
 }
 
 export async function middleware(req: NextRequest, event: NextFetchEvent) {
-  console.time("middleware");
-  console.time("get id");
   let id = getStatsigUserId(req.cookies);
-  console.timeEnd("get id");
   let needIdCookieUpdate = false;
 
   if (id) {
-    console.time("get cookie");
     const url = getExperimentUrlFromCookie(req.cookies);
-    console.timeEnd("get cookie");
     if (url) {
-      console.timeEnd("middleware");
       return rewriteUrl(req, url);
     }
   } else {
-    console.time("gen id");
     id = generateStatsigUserId();
-    console.timeEnd("gen id");
     needIdCookieUpdate = true;
-    console.time("get experiments");
     const { experiments, rules } = await getExperiments(id);
-    console.timeEnd("get experiments");
     try {
-      console.time("encoding");
       const experimentsEncoded = encodeExperiments(experiments);
       const rulesEncoded = encodeRules(rules);
-      console.timeEnd("encoding");
       const response = rewriteUrl(req, experimentsEncoded);
-      console.time("setting cookies");
       if (needIdCookieUpdate) {
         setCookieOnResponse(
           response,
@@ -107,13 +94,9 @@ export async function middleware(req: NextRequest, event: NextFetchEvent) {
       }
       setCookieOnResponse(response, EXPERIMENTS_COOKIE, experimentsEncoded);
       setCookieOnResponse(response, EXPERIMENTS_RULES_COOKIE, rulesEncoded);
-      console.timeEnd("setting cookies");
-
-      console.timeEnd("middleware");
       return response;
     } catch (e) {
       console.log(e);
-      console.timeEnd("middleware");
       return rewriteUrl(req, VARIATION_WITH_DEFAULT_EXPERIMENTS);
     }
   }
